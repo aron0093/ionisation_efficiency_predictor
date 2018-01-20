@@ -10,3 +10,6 @@ Binary classification of peptide pairs by taking the ratio of their abundance de
 * theano/tensorflow
 * sklearn
 
+## processing
+
+* Scripts to process MS/MS quantification data.
