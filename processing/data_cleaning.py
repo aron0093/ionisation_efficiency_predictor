@@ -24,7 +24,6 @@ from collections import defaultdict
 import networkx as nx
 import numpy as np
 import pandas as pd
-import sframe as sf
 from numpy import array, isfinite, nanmean, nansum
 from pyteomics import fasta
 from scipy import stats
@@ -325,25 +324,16 @@ def main():
     apars = argparse.ArgumentParser(
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
-    apars.add_argument('-i', default='peptides.csv',
-                       help='''Quantification result of peptides in TSV format. Requied columns are protein, peptide and q-value are acceptable. 
-                             All other columns are treated as separate runs''')
+    apars.add_argument('-i', default='../sample_data/peptides.tsv',
+                       help='''Peptide quantification in TSV format. 
+                               Required columns are 'protein' (protein IDs), 'peptide' (peptide sequences). 
+                               All other columns are treated as separate runs''')
+
     # The first column contains unique peptide sequences
     # Missing values should be empty instead of zeros
 
-    apars.add_argument('-db', nargs='?',
-                       help='''Protein database in FASTA format.
-        If None, the peptide file must have protein ID(s) in the second column.
-        ''')
 
-    apars.add_argument('-samples', nargs='?',
-                       help='''File of the sample list.
-        One run and its sample group per line, separated by tab.
-        If None, read from peptide file headings,
-           then each run will be summarized as a group.
-        ''')
-
-    apars.add_argument('-log2', default='True',
+    apars.add_argument('-log2', default='False',
                        help='Input abundances are in log scale (True) or linear scale (False)')
 
     apars.add_argument('-normalize',
@@ -388,11 +378,11 @@ def main():
     ##############################################################################
     ############################################################################## 
 
-    apars.add_argument('-selection', default = 'selected.tsv',
+    apars.add_argument('-selection', default = '../sample_data/selected.tsv',
                      
                        help='Path to selected peptides file (writing in TSV format).')
 
-    apars.add_argument('-out', default = 'processed.tsv',
+    apars.add_argument('-out', default = '../sample_data/train.tsv',
                      
                        help='Path to processed output file (writing in TSV format).')
 
@@ -401,6 +391,9 @@ def main():
 
     # ------------------------------------------------
     args = apars.parse_args()
+
+    args.samples = None
+    args.db = None
 
     def boolparam(p):
         ''' convert a string parameter to boolean value'''
@@ -420,8 +413,12 @@ def main():
     
     # To process our raw data
     df = pd.read_csv(args.i, sep = '\t', index_col=0)
-    df.dropna(axis = 0, how = 'any', inplace = True)  
-    df.drop(['q-value'], axis =1, inplace = True)
+    df.dropna(axis = 0, how = 'any', inplace = True)
+
+    for col in df.columns:
+        if col.lower() in ['q-value', 'charge']:
+            df.drop(col, axis=1, inplace=True)
+
     cols = [col for col in df.columns if col not in ['protein']]
     df = df[['protein']+cols]
 
@@ -523,7 +520,7 @@ def main():
 
         # =====----=====-----=====-----=====
         peps = pg[prot]  # constituent peptides
-        dx = df.ix[[p for p in peps if p in df.index]]  # dataframe
+        dx = df.loc[[p for p in peps if p in df.index]]  # dataframe
         pep = [p for p in peps if p in df.index]
         pep_count = len(dx)  # number of peptides
         pep_abd = dx[samples].values
@@ -654,9 +651,20 @@ def main():
     # Code to generate data for ion_eff_predictor
 
     data = pd.read_csv(args.i, sep = '\t')
-    diffacto = sf.SFrame.read_csv(args.selection, 
+    diffacto = pd.read_csv(args.selection, sep = '\t') # Selected proteins, peptides and values
 
-                                   column_type_hints = {'Protein': str, 'Peptides': list, 'Selected': list, 'Values': list}, delimiter = '\t') # Selected proteins, peptides and values
+    diffacto['Protein'] = diffacto['Protein'].astype(str)
+
+    for col in ['Peptides', 'Selected', 'Values']:
+
+        diffacto[col] = diffacto[col].str.replace(']',"")
+        diffacto[col] = diffacto[col].str.replace('[',"")
+        diffacto[col] = diffacto[col].str.replace(',',"")
+        diffacto[col] = diffacto[col].str.split()
+
+    diffacto.dropna(how='any', inplace=True)
+    diffacto['Peptides'] = diffacto['Peptides'].apply(lambda x: [i.replace("'","") for i in x])
+    diffacto['Values'] = diffacto['Values'].apply(lambda x : [float(i) for i in x])
 
     data = data[['peptide', 'protein']]
 
@@ -702,16 +710,21 @@ def main():
 
     def pep_rep(x):
 
-        x = x.replace('M[16]', 'X').partition('.')[-1].partition('.')[0]
-
-        return x
+        if '.' in x[:int(np.ceil(len(x)/2))]:
+            x = x.replace('M[16]', 'X').partition('.')[-1].partition('.')[0]
+            return x
+        elif '.' in x[int(np.ceil(len(x)/2)):]:
+            x = x.replace('M[16]', 'X').partition('.')[0]
+            return x
+        else:
+            return x
 
     for i in range(len(protein_list)):
 
         minn = selected.loc[selected['protein'] == protein_list[i]]['value'].min()
         maxx = selected.loc[selected['protein'] == protein_list[i]]['value'].max()
 
-        selected.loc[selected['protein'] == protein_list[i], 'value'] = selected.loc[selected['protein'] == protein_list[i], 'value'].apply(lambda(x): (x-minn)/(maxx-minn))
+        selected.loc[selected['protein'] == protein_list[i], 'value'] = selected.loc[selected['protein'] == protein_list[i], 'value'].apply(lambda x: (x-minn)/(maxx-minn))
         
         selected.loc[selected['protein'] == protein_list[i], 'peptide'] = selected.loc[selected['protein'] == protein_list[i], 'peptide'].apply(pep_rep)   
 
@@ -736,6 +749,7 @@ def main():
     print('Category'+'\t'+'Original_count'+'\t'+'Selected_count'+'\n')
     print('Proteins'+'\t'+str(ori_prot)+'\t'+str(sel_prot)+'\n')
     print('Peptides'+'\t'+str(ori_pep)+'\t'+str(sel_pep)+'\n')
+
 
 ############################################################################################################################################################
 ############################################################################################################################################################
