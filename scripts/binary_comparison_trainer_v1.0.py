@@ -1,7 +1,7 @@
 '''
 Author: Revant Gupta
         SciLife Summer Fellow 2017
-        Lukas Kall Lab
+        Lukas Käll Lab
 
 Description:
 
@@ -33,7 +33,8 @@ from sklearn.utils import shuffle
 
 from keras.models import Sequential, Model
 from keras.layers.convolutional import Conv2D
-from keras.layers import Dense, Flatten, Merge, Dropout, Reshape
+from keras.layers import Dense, Flatten, Dropout, Reshape, Input, concatenate
+from keras.utils import Sequence
 from keras import optimizers as opt
 from keras import regularizers as reg
 from keras import initializers as init
@@ -45,41 +46,45 @@ import argparse
 
 apars = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
-apars.add_argument('-train', default='train.tsv',
+apars.add_argument('-train', '--train_data', default='../sample_data/train.tsv',
                        help='''Training data set''')
 
-apars.add_argument('-val', default=None,
+apars.add_argument('-val', '--validation_data', default=None,
                        help='''Validation data set (Optional)''')
 
-apars.add_argument('-out', default = 'classifier.h5',
+apars.add_argument('-out', '--trained_classifier', default = '../models/classifier.h5',
                         help = ''' Save classifier weights after training''')
 
-apars.add_argument('-out_encoder', default = 'encoder.h5',
+apars.add_argument('-out_e', '--trained_encoder', default = '../models/encoder.h5',
                         help = ''' Save encoder weights after training''')
 
-apars.add_argument('-clas_epochs', default = 2000,
+apars.add_argument('-epochs_c', '--classifier_epochs', default = 2000,
                         help = ''' Number of training epochs for the classifier''')
 
-apars.add_argument('-encode_epochs', default = 25,
+apars.add_argument('-epochs_e', '--encoder_epochs', default = 25,
                         help = ''' Number of training epochs for the autoencoder''')
 
-apars.add_argument('-batch', default = 500,
+apars.add_argument('-batch', '--batch_size', default = 500,
                         help = ''' Batch size. Must be equal to or less than the number of data points in either set.''')
 
-apars.add_argument('-model', default = None,
+apars.add_argument('--model', default = None,
                         help = ''' Load existing classifier model for further training. (Optional)''')
 
-apars.add_argument('-encoder', default = None,
+apars.add_argument('--encoder', default = None,
                         help = ''' Load existing autoencoder model for encoding data. (Optional)''')
 
-apars.add_argument('-log', default = None,
+apars.add_argument('--log', default = None,
                         help = ''' Training logs. (Optional)''')
+
+apars.add_argument('--verbose', default = 1,
+                        help = ''' Verbosity (0,1,2). (Optional)''')
+                        
 
 args = apars.parse_args()
 
-clas_epochs = args.clas_epochs # Select
-encode_epochs = args.encode_epochs # Select
-batch_size = args.batch # Minimum number of data points required 
+epochs_c = int(args.classifier_epochs) # Select
+epochs_e = int(args.encoder_epochs) # Select
+batch_size = int(args.batch_size) # Minimum number of data points required 
 
   #--------------------------------------------------------------------------------------------------------------------------------------------#  
    # Data processing scripts for raw MS data can be found in the processing folder of the repository. This script only allows a specific format.
@@ -226,7 +231,8 @@ def pep_rep_builder(comparison):
 
     return rep_list
 
-# Infinite generator to yield inputs and targets (required for autoencoder fitting later)
+
+# Infinite generator to yield inputs and targets (required later for autoencoder fitting)
 
 def auto_input_gen(inputs, batch_size):
 
@@ -250,7 +256,7 @@ def auto_input_gen(inputs, batch_size):
                 
         yield ([np.array(input_array_a), np.array(input_array_b)], np.array(target_array))
 
-# Infinite generator to yield inputs (required for autoencoder output later)
+# Infinite generator to yield inputs (required later for encoder output)
 
 def auto_pred_gen(inputs, batch_size):
 
@@ -292,40 +298,37 @@ def Auto_CNN():
 
     # First peptide branch
 
-    model_a = Sequential()
-    model_a.add(Conv2D(800,(6,len(aa_alphabet)), input_shape = (1,120,len(aa_alphabet)), strides=(1,1), padding='valid', 
-                        data_format='channels_first', activation='relu', use_bias=False, kernel_initializer='glorot_uniform'))
-    model_a.add(Flatten())
+    model_a_inp = Input(shape = (1,120,len(aa_alphabet)))
+    model_a = Conv2D(800,(6,len(aa_alphabet)), strides=(1,1), padding='valid', 
+                        data_format='channels_first', activation='relu', use_bias=False, kernel_initializer='glorot_uniform')(model_a_inp)
+    model_a = Flatten()(model_a)
 
     # Second peptide branch
 
-    model_b = Sequential()
-    model_b.add(Conv2D(800,(6,len(aa_alphabet)), input_shape = (1,120,len(aa_alphabet)), strides=(1,1), padding='valid', 
-                        data_format='channels_first', activation='relu', use_bias=False, kernel_initializer='glorot_uniform'))
-    model_b.add(Flatten())
+    model_b_inp = Input(shape = (1,120,len(aa_alphabet)))
+    model_b = Conv2D(800,(6,len(aa_alphabet)), strides=(1,1), padding='valid', 
+                        data_format='channels_first', activation='relu', use_bias=False, kernel_initializer='glorot_uniform')(model_b_inp)
+    model_b = Flatten()(model_b)
 
     # Final model
 
-    cnv = Merge([model_a, 
-                model_b, 
-                ], 
-                mode = 'concat') # Deprecated, needs replacement
+    cnv = concatenate([model_a, 
+                       model_b, 
+                     ])
 
     # Auto-encoder
 
-    model = Sequential()
+    encoder = Dense(240, activation='relu', use_bias=True, bias_initializer = 'random_normal', kernel_initializer='glorot_uniform')(cnv) # Encoder
 
-    model.add(cnv)
+    x = Dense(5040, activation='relu', use_bias=True, bias_initializer = 'random_normal', kernel_initializer='glorot_uniform')(encoder)
 
-    model.add(Dense(240, activation='relu', use_bias=True, bias_initializer = 'random_normal', kernel_initializer='glorot_uniform')) # Encoder
+    decoder = Reshape((1,240,len(aa_alphabet)))(x) # Decoder
 
-    model.add(Dense(5040, activation='relu', use_bias=True, bias_initializer = 'random_normal', kernel_initializer='glorot_uniform'))
-
-    model.add(Reshape((1,240,len(aa_alphabet)))) # Decoder
+    model = Model(inputs = [model_a_inp, model_b_inp], outputs = decoder)
 
     model.compile(optimizer= nadam, loss='mse', metrics = ['accuracy'])
 
-    encoder = Model(inputs=model.input, outputs=(model.layers[1]).output)
+    encoder = Model(inputs = [model_a_inp, model_b_inp], outputs = encoder)
 
     return model, encoder
 
@@ -360,93 +363,116 @@ def clas_NN():
 ###################################################################################################################################################################################
 ###################################################################################################################################################################################
 
+def main(args):
 
-start = time.time()
+    start = time.time()
 
-print('\n')
-print('Processing data...')
-print('\n')
+    print('\n')
+    print('Processing data...')
+    print('\n')
 
-train_inp, train_tar = data_preprocessing(args.train)
+    train_inp, train_tar = data_preprocessing(args.train_data)
 
-if args.val != None:
+    if args.validation_data != None:
 
-    val_inp, val_tar = data_preprocessing(str(args.val))
+        val_inp, val_tar = data_preprocessing(str(args.validation_data))
 
-print('\n')
-print('Running autoencoder...')
-print('\n')
+    print('\n')
+    print('Running autoencoder...')
+    print('\n')
 
-if args.encoder != None:
+    if args.encoder != None:
 
-    encoder = load_model(str(args.encoder))
-
-else:
-
-    model, encoder = Auto_CNN()
-
-    if args.val != None:
-
-        #model.fit_generator(auto_input_gen(train_inp, batch_size), (int(len(train_inp)/batch_size)+1), epochs=encode_epochs, verbose = 2, 
-        #                validation_data=auto_input_gen(val_inp, batch_size), validation_steps=(int(len(val_inp)/batch_size)+1),               
-        #                max_q_size=1, workers=4, pickle_safe=True, initial_epoch=0)
-
-        # Including validation data for autoencoder for correct encoding
-
-        enc_inp = train_inp + val_inp
-
-        model.fit_generator(auto_input_gen(enc_inp, batch_size), (int(len(enc_inp)/batch_size)+1), epochs=encode_epochs, verbose = 2, 
-                                       
-                        max_q_size=1, workers=4, pickle_safe=True, initial_epoch=0)
+        encoder = load_model(str(args.encoder))
 
     else:
 
-        model.fit_generator(auto_input_gen(train_inp, batch_size), (int(len(train_inp)/batch_size)+1), epochs=encode_epochs, verbose = 2, 
-                        max_q_size=1, workers=4, pickle_safe=True, initial_epoch=0)
+        model, encoder = Auto_CNN()
 
-    encoder.save(args.out_encoder)
+        if args.validation_data != None:
 
-print('\n')
-print('Generating encoded data...')
-print('\n')
+            #model.fit_generator(auto_input_gen(train_inp, batch_size), (int(len(train_inp)/batch_size)+1), epochs=epochs_e, verbose = args.verbose, 
+            #                validation_data=auto_input_gen(val_inp, batch_size), validation_steps=(int(len(val_inp)/batch_size)+1),               
+            #                 initial_epoch = 0, max_queue_size=1)
 
-enc_data = pd.DataFrame()
+            # Including validation data in the training data for the autoencoder (validation is relevant to the classifier)
 
-train_X = encoder.predict_generator(auto_pred_gen(train_inp, batch_size), (int(len(train_inp)/batch_size)+1), max_q_size=1, workers=4, pickle_safe=True)
-train_Y = train_tar+train_tar[:int(len(train_X)-len(train_tar))]
+            enc_inp = train_inp + val_inp
 
-if args.val != None:
-   
-    val_X = encoder.predict_generator(auto_pred_gen(val_inp, batch_size), (int(len(val_inp)/batch_size)+1), max_q_size=1, workers=4, pickle_safe=True)
-    val_Y = val_tar+val_tar[:int(len(val_X)-len(val_tar))]
+            ahist = model.fit_generator(auto_input_gen(enc_inp, batch_size), (int(len(enc_inp)/batch_size)+1), epochs=epochs_e, verbose = args.verbose,                                      
+                            initial_epoch = 0, max_queue_size=1)
+
+        else:
+
+            ahist = model.fit_generator(auto_input_gen(train_inp, batch_size), (int(len(train_inp)/batch_size)+1), epochs=epochs_e, verbose = args.verbose, 
+                            initial_epoch = 0, max_queue_size=1)
+
+        encoder.save(args.trained_encoder)
+
+        print('\n')
+        print('Final autoencoder accuracy: {acc} %'.format(acc = np.round(float(ahist.history['acc'][-1])*100.0, 2)))
+        print('\n')
+
+    print('\n')
+    print('Generating encoded data...')
+    print('\n')
+
+    enc_data = pd.DataFrame()
+
+    train_X = encoder.predict_generator(auto_pred_gen(train_inp, batch_size), (int(len(train_inp)/batch_size)+1), 
+                                        max_queue_size=1)
+    train_Y = train_tar+train_tar[:int(len(train_X)-len(train_tar))]
+
+    if args.validation_data != None:
+    
+        val_X = encoder.predict_generator(auto_pred_gen(val_inp, batch_size), (int(len(val_inp)/batch_size)+1), 
+                                        max_queue_size=1)
+        val_Y = val_tar+val_tar[:int(len(val_X)-len(val_tar))]
 
 
-print('\n')
-print('Training classifier...')
-print('\n')
+    print('\n')
+    print('Training classifier...')
+    print('\n')
 
-if args.model != None:
+    if args.model != None:
 
-    classiier = load_model(str(args.model)) # Train an existing model
+        classiier = load_model(str(args.model)) # Train an existing model
 
-else:
+    else:
 
-    classifier = clas_NN()
+        classifier = clas_NN()
 
 
-if args.val != None:
+    if args.validation_data != None:
 
-    classifier.fit(train_X, train_Y, batch_size = 2000, epochs = clas_epochs, verbose = 2, validation_data = (val_X, val_Y))
+        chist = classifier.fit(train_X, train_Y, batch_size = 2000, epochs = epochs_c, verbose = args.verbose, validation_data = (val_X, val_Y))
 
-else:
+        print('\n')
+        print('Final classifier training and validation accuracy: {acc} %, {val_acc} %'.format(acc = np.round(float(chist.history['binary_accuracy'][-1])*100.0, 2), 
+                                                                                      val_acc = np.round(float(chist.history['val_binary_accuracy'][-1])*100.0, 2)))
+        print('\n')
 
-    classifier.fit(train_X, train_Y, batch_size = 2000, epochs = clas_epochs, verbose = 2)
+    else:
 
-classifier.save(args.out)
+        chist = classifier.fit(train_X, train_Y, batch_size = 2000, epochs = epochs_c, verbose = args.verbose)
 
-print('\n')
+        print('\n')
+        print('Final classifier training accuracy: {acc} %'.format(acc = np.round(float(chist.history['binary_accuracy'][-1]*100.0, 2))))
+        print('\n')
 
-print('The script took %.2f seconds to run'%(time.time()-start))
+    classifier.save(args.trained_classifier)
+
+
+
+    print('\n')
+
+    print('The script took %.2f seconds to run'%(time.time()-start))
 
 ###################################################################################################################################################################################
 ###################################################################################################################################################################################
+
+if __name__ == '__main__':
+
+    __spec__ = None
+
+    main(args)
