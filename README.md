@@ -10,16 +10,16 @@ Binary classification of peptide pairs (labels) is done by taking the ratio of t
 
 The trained classifier can be used to create a ranked list of peptides (ionisation efficiency) by a sorting algorithm.
 
+## processing
+
+* Scripts to process peptide abundance data.
+
 # Requirements:
 
 * Anaconda python3
 * keras 2.2.0
 * tensorflow 1.8.0
 * scikit-learn
-
-## processing
-
-* Scripts to process peptide abundance data.
 
 **Notes:**
 
